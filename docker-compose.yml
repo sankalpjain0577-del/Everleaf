@@ -1,0 +1,26 @@
+version: "3.9"
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - JWT_SECRET=change_this_to_a_long_random_secret
+      - CLIENT_ORIGIN=*
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_db:/app
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_uploads:
+  backend_db:

@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { scroll-behavior: smooth; }
+
+body {
+  @apply bg-ivory text-ink font-body antialiased;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(43,38,32,0.06) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+.font-display { font-family: 'Fraunces', serif; }
+
+.eyebrow {
+  @apply font-mono text-[11px] tracking-[0.25em] uppercase text-forest/70;
+}
+
+.seal {
+  @apply inline-flex items-center justify-center rounded-seal border border-gold/60 text-gold font-mono text-xs tracking-widest px-3 py-1;
+}
+
+.btn-primary {
+  @apply bg-forest text-ivory px-5 py-2.5 rounded-full font-body font-medium text-sm tracking-wide hover:bg-forest-dark transition-colors duration-200;
+}
+
+.btn-secondary {
+  @apply border border-forest text-forest px-5 py-2.5 rounded-full font-body font-medium text-sm tracking-wide hover:bg-forest hover:text-ivory transition-colors duration-200;
+}
+
+.card {
+  @apply bg-white/70 border border-ink/10 rounded-2xl shadow-sm;
+}
+
+.input {
+  @apply w-full border border-ink/20 rounded-lg px-4 py-2.5 bg-white/80 focus:outline-none focus:ring-2 focus:ring-gold/50 focus:border-gold text-sm;
+}
