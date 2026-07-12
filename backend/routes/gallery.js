@@ -2,7 +2,6 @@ const express = require('express');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const sharp = require('sharp');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
@@ -16,29 +15,18 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Cloudinary Storage Setup for Multer
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'everleaf_gallery',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
-    public_id: (req, file) => uuidv4()
-  }
-});
-
+// Use Multer memory storage so we get the file buffer directly!
+const storage = multer.memoryStorage();
 const upload = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 } });
 
 function getEvent(req) {
   return db.prepare('SELECT * FROM events WHERE event_code = ?').get(req.user.event_code);
 }
 
-// Sharpness calculation using buffer from Cloudinary URL
-async function sharpnessScore(url) {
+// Sharpness calculation directly from local memory buffer (No network fetch required!)
+async function sharpnessScore(buffer) {
   try {
-    const response = await fetch(url);
-    const buffer = await response.arrayBuffer();
-    
-    const { data, info } = await sharp(Buffer.from(buffer))
+    const { data, info } = await sharp(buffer)
       .resize(400, 400, { fit: 'inside' })
       .greyscale()
       .raw()
@@ -62,7 +50,7 @@ async function sharpnessScore(url) {
   }
 }
 
-// Upload photos direct to Cloudinary
+// Upload route handler
 router.post('/upload', requireAuth, upload.array('photos', 30), async (req, res) => {
   const event = getEvent(req);
   if (!event) return res.status(404).json({ error: 'No event found for your account' });
@@ -70,37 +58,63 @@ router.post('/upload', requireAuth, upload.array('photos', 30), async (req, res)
   const burstGroup = uuidv4();
   const results = [];
 
-  for (const file of req.files) {
-    const cloudUrl = file.path; 
-    const filename = file.filename;
-    
-    let score = 0;
-    let meta = {};
-    try {
-      score = await sharpnessScore(cloudUrl);
-      const response = await fetch(cloudUrl);
-      const buffer = await response.arrayBuffer();
-      meta = await sharp(Buffer.from(buffer)).metadata();
-    } catch (e) {
-      score = 0;
-    }
-    
-    const id = uuidv4();
-    db.prepare(`INSERT INTO photos (id, event_id, uploader_id, filename, url, burst_group, sharpness, width, height)
-                VALUES (?,?,?,?,?,?,?,?,?)`)
-      .run(id, event.id, req.user.id, filename, cloudUrl, burstGroup, score, meta.width || null, meta.height || null);
+  try {
+    for (const file of req.files) {
+      // 1. Calculate sharpness & metadata locally first from memory buffer
+      let score = 0;
+      let meta = {};
+      try {
+        score = await sharpnessScore(file.buffer);
+        meta = await sharp(file.buffer).metadata();
+      } catch (e) {
+        score = 0;
+      }
+
+      // 2. Upload to Cloudinary using file buffer stream
+      const uploadPromise = () => {
+        return new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            {
+              folder: 'everleaf_gallery',
+              public_id: uuidv4(),
+              format: 'jpg'
+            },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+          stream.end(file.buffer);
+        });
+      };
+
+      const cloudResult = await uploadPromise();
+      const cloudUrl = cloudResult.secure_url;
+      const filename = cloudResult.public_id;
+      const id = uuidv4();
       
-    results.push({ id, url: cloudUrl, sharpness: score });
-  }
+      // 3. Save to SQLite database
+      db.prepare(`INSERT INTO photos (id, event_id, uploader_id, filename, url, burst_group, sharpness, width, height)
+                  VALUES (?,?,?,?,?,?,?,?,?)`)
+        .run(id, event.id, req.user.id, filename, cloudUrl, burstGroup, score, meta.width || null, meta.height || null);
+        
+      results.push({ id, url: cloudUrl, sharpness: score });
+    }
 
-  if (results.length > 1) {
-    const best = results.reduce((a, b) => (b.sharpness > a.sharpness ? b : a));
-    db.prepare('UPDATE photos SET is_best_shot = 1 WHERE id = ?').run(best.id);
-  } else if (results.length === 1) {
-    db.prepare('UPDATE photos SET is_best_shot = 1 WHERE id = ?').run(results[0].id);
-  }
+    // Mark best shot
+    if (results.length > 1) {
+      const best = results.reduce((a, b) => (b.sharpness > a.sharpness ? b : a));
+      db.prepare('UPDATE photos SET is_best_shot = 1 WHERE id = ?').run(best.id);
+    } else if (results.length === 1) {
+      db.prepare('UPDATE photos SET is_best_shot = 1 WHERE id = ?').run(results[0].id);
+    }
 
-  res.json({ uploaded: results.length, burst_group: burstGroup });
+    res.json({ uploaded: results.length, burst_group: burstGroup });
+
+  } catch (globalError) {
+    console.error("Upload handler crash:", globalError);
+    res.status(500).json({ error: 'Internal server upload error', details: globalError.message });
+  }
 });
 
 // List all photos
@@ -111,7 +125,7 @@ router.get('/', requireAuth, (req, res) => {
   res.json({ photos, event: { title: event.title, code: event.event_code } });
 });
 
-// Delete photo from database and Cloudinary
+// Delete photo
 router.delete('/:id', requireAuth, async (req, res) => {
   const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
   if (!photo) return res.status(404).json({ error: 'Photo not found' });
