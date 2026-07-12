@@ -1,7 +1,6 @@
 import axios from 'axios';
 
-const api = axios.create({ baseURL: '/api' });
-
+const api = axios.create({ baseURL: 'https://everleaf-2.onrender.com/api' });
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('everleaf_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
