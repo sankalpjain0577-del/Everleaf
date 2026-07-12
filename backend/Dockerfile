@@ -1,8 +1,9 @@
-FROM node:20-slim
+FROM node:18-bullseye-slim
+RUN apt-get update && apt-get install -y python3 build-essential
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm install
 COPY . .
 RUN mkdir -p uploads
-EXPOSE 5000
+EXPOSE 10000
 CMD ["node", "server.js"]
